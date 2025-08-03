@@ -1,0 +1,98 @@
+services:
+  mysql:
+    container_name: temporal-mysql
+    environment:
+      MYSQL_DATABASE: doc_processing_db
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: rootpassword
+    image: arm64v8/mysql:8.0
+    networks:
+      - temporal-network
+    ports:
+      - "3308:3306"
+    volumes:
+      - /var/lib/mysql
+
+  temporal:
+    container_name: temporal
+    depends_on:
+      - mysql
+    environment:
+      - DB=mysql8
+      - DB_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PWD=rootpassword
+      - MYSQL_SEEDS=mysql
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    image: temporalio/auto-setup:1.25.1
+    networks:
+      - temporal-network
+    ports:
+      - 7233:7233
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-admin-tools:
+    container_name: temporal-admin-tools
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    image: temporalio/admin-tools:1.25.1-tctl-1.18.1-cli-1.1.0
+    networks:
+      - temporal-network
+    stdin_open: true
+    tty: true
+
+  temporal-ui:
+    container_name: temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    image: temporalio/ui:2.26.2
+    networks:
+      - temporal-network
+    ports:
+      - 8080:8080
+
+  document-processing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    networks:
+      - temporal-network
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/src
+    working_dir: /src/doc_processing_service
+    depends_on:
+      - temporal
+
+  temporal-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/src
+    working_dir: /src/doc_processing_service
+    depends_on:
+      - temporal
+    networks:
+      - temporal-network
+    ports:
+      - "8000:8000"   # Health check
+      - "9464:9464"   # Prometheus metrics
+
+networks:
+  temporal-network:
+    driver: bridge
+    name: temporal-network
